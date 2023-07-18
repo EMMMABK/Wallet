@@ -1,8 +1,16 @@
+# admin.py
+from django import forms
 from django.contrib import admin
-from django.urls import path
-from django.shortcuts import redirect
 from .models import CryptoPrice, Purchase
 import requests
+from django.urls import path
+
+class PurchaseForm(forms.ModelForm):
+    dollar_amount = forms.DecimalField(label='Quantity ($)', decimal_places=2, required=False)
+
+    class Meta:
+        model = Purchase
+        fields = ['user', 'crypto', 'dollar_amount']
 
 class CryptoPriceAdmin(admin.ModelAdmin):
     list_display = ['symbol', 'price']
@@ -18,7 +26,7 @@ class CryptoPriceAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         if not change:
             binance_data = self.get_binance_data()
-            symbol = form.cleaned_data['symbol']
+            symbol = form.cleaned_data['crypto']  # 'symbol' was incorrect, it should be 'crypto'
             for item in binance_data:
                 if item['symbol'] == symbol:
                     obj.price = item['price']
@@ -46,32 +54,31 @@ class CryptoPriceAdmin(admin.ModelAdmin):
         return redirect('admin:appname_purchase_change', purchase_id)
 
 class PurchaseAdmin(admin.ModelAdmin):
-    list_display = ['user', 'crypto', 'quantity', 'timestamp', 'max_quantity']
+    list_display = ['user', 'crypto', 'quantity_in_dollars', 'timestamp', 'max_quantity']
     list_filter = ['user', 'crypto']
     search_fields = ['user__username', 'crypto__symbol']
     readonly_fields = ['max_quantity']
 
-    def get_form(self, request, obj=None, **kwargs):
-        form = super().get_form(request, obj, **kwargs)
-        form.base_fields['quantity'].required = False
-        return form
+    # Include the custom form in the admin view
+    form = PurchaseForm
+
+    def quantity_in_dollars(self, obj=None):
+        if obj and obj.crypto and obj.crypto.price:
+            if obj.quantity:
+                return obj.quantity * obj.crypto.price
+        return None
 
     def max_quantity(self, obj=None):
-        if obj and obj.crypto and obj.crypto.price:
-            user_balance = 100  # Max amount in USD that the user can spend (100 USD in this example)
-            max_quantity = user_balance / obj.crypto.price
-            return max_quantity
+        if obj and obj.crypto and obj.crypto.price and obj.dollar_amount:
+            return obj.dollar_amount / obj.crypto.price
         return None
 
     def save_model(self, request, obj, form, change):
-        if obj.quantity and obj.crypto and obj.crypto.price:
-            user_balance = 100  # Max amount in USD that the user can spend (100 USD in this example)
-            max_quantity = user_balance / obj.crypto.price
-            obj.quantity = min(obj.quantity, max_quantity)
+        if form.cleaned_data.get('dollar_amount') and obj.crypto and obj.crypto.price:
+            dollar_amount = form.cleaned_data['dollar_amount']
+            obj.quantity = dollar_amount / obj.crypto.price
+            obj.amount_usd = dollar_amount  # Set the amount_usd field
         super().save_model(request, obj, form, change)
-
-    max_quantity.short_description = 'Max'
-    max_quantity.admin_order_field = 'crypto__price'
 
     def buy_max_action(self, request, queryset):
         for purchase in queryset:

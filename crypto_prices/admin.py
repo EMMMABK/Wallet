@@ -1,9 +1,10 @@
-# admin.py
 from django import forms
 from django.contrib import admin
-from .models import CryptoPrice, Purchase
+from .models import CryptoPrice, Purchase, Sales
 import requests
 from django.urls import path
+from django.db.models import Sum
+
 
 class PurchaseForm(forms.ModelForm):
     dollar_amount = forms.DecimalField(label='Quantity ($)', decimal_places=2, required=False)
@@ -89,5 +90,65 @@ class PurchaseAdmin(admin.ModelAdmin):
 
     actions = [buy_max_action]
 
+class SalesForm(forms.ModelForm):
+    class Meta:
+        model = Sales
+        fields = ['user', 'crypto', 'quantity']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        purchased_cryptos = Purchase.objects.values_list('crypto__id', flat=True).distinct()
+        self.fields['crypto'].queryset = CryptoPrice.objects.filter(id__in=purchased_cryptos)
+
+
+class SalesAdmin(admin.ModelAdmin):
+    list_display = ['user', 'crypto', 'quantity', 'timestamp']
+    list_filter = ['user', 'crypto']
+    search_fields = ['user__username', 'crypto__symbol']
+
+    form = SalesForm
+
+    def save_model(self, request, obj, form, change):
+        if obj.crypto and obj.quantity:
+            # Check if the requested quantity exceeds the available purchased quantity
+            purchased_quantity = Purchase.objects.filter(
+                user=obj.user,
+                crypto=obj.crypto
+            ).aggregate(total_quantity=Sum('quantity'))['total_quantity']  # Use the Sum aggregation function
+
+            if not purchased_quantity:
+                purchased_quantity = 0
+
+            remaining_quantity = purchased_quantity - obj.quantity
+
+            if remaining_quantity < 0:
+                raise forms.ValidationError(
+                    f"Cannot sell more than the purchased quantity ({purchased_quantity})."
+                )
+
+            # Update the quantity in the Purchase model
+            latest_purchase = Purchase.objects.filter(
+                user=obj.user,
+                crypto=obj.crypto
+            ).order_by('timestamp').first()
+
+            latest_purchase_quantity = latest_purchase.quantity
+
+            if remaining_quantity == 0:
+                latest_purchase.delete()
+            else:
+                latest_purchase.quantity = remaining_quantity
+                latest_purchase.save()
+
+            # Save the Sales object
+            obj.save()
+
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        initial['user'] = request.user.id
+        return initial
+
+
+admin.site.register(Sales, SalesAdmin)
 admin.site.register(CryptoPrice, CryptoPriceAdmin)
 admin.site.register(Purchase, PurchaseAdmin)

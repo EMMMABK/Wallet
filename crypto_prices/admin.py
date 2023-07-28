@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib import admin
-from .models import CryptoPrice, Purchase, Sales
+from .models import CryptoPrice, Purchase, Sales, SalesDollars
 import requests
 from django.urls import path
 from django.db.models import Sum
@@ -149,6 +149,71 @@ class SalesAdmin(admin.ModelAdmin):
         return initial
 
 
+class SalesDollarsForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Limit the queryset of 'crypto' field to only show available cryptocurrencies in Purchases
+        purchased_cryptos = Purchase.objects.values_list('crypto__id', flat=True).distinct()
+        self.fields['crypto'].queryset = CryptoPrice.objects.filter(id__in=purchased_cryptos)
+
+    class Meta:
+        model = SalesDollars
+        fields = ['user', 'crypto', 'price']
+
+    def clean(self):
+        cleaned_data = super().clean()
+        crypto = cleaned_data.get('crypto')
+        price = cleaned_data.get('price')
+
+        if not crypto or not price:
+            return
+
+        # Get the total purchased quantity
+        purchased_quantity = Purchase.objects.filter(
+            user=cleaned_data['user'],
+            crypto=crypto
+        ).aggregate(total_quantity=Sum('quantity'))['total_quantity']
+
+        if not purchased_quantity:
+            purchased_quantity = 0
+
+        # Calculate the total purchased amount
+        total_purchased_amount = purchased_quantity * crypto.price
+
+        if total_purchased_amount < price:
+            raise forms.ValidationError(
+                f"Cannot sell for more than the total purchased amount ({total_purchased_amount})."
+            )
+
+        # Calculate the quantity to be deducted from Purchases
+        quantity_to_deduct = price / crypto.price
+
+        # Update the quantity in the Purchase model
+        latest_purchase = Purchase.objects.filter(
+            user=cleaned_data['user'],
+            crypto=crypto
+        ).order_by('timestamp').first()
+
+        latest_purchase_quantity = latest_purchase.quantity
+
+        remaining_quantity = latest_purchase_quantity - quantity_to_deduct
+
+        if remaining_quantity == 0:
+            latest_purchase.delete()
+        else:
+            latest_purchase.quantity = remaining_quantity
+            latest_purchase.save()
+
+        return cleaned_data
+
+class SalesDollarsAdmin(admin.ModelAdmin):
+    list_display = ['user', 'crypto', 'price', 'timestamp']
+    list_filter = ['user', 'crypto']
+    search_fields = ['user__username', 'crypto__symbol']
+
+    form = SalesDollarsForm
+
+admin.site.register(SalesDollars, SalesDollarsAdmin)
 admin.site.register(Sales, SalesAdmin)
 admin.site.register(CryptoPrice, CryptoPriceAdmin)
 admin.site.register(Purchase, PurchaseAdmin)

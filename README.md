@@ -1,5 +1,5 @@
 # Crypto Prices Django Project 📈💰
-
+![CryptoCurrency](https://ibb.co/M2GNnBc)
 This is a Django project that fetches cryptocurrency prices from the Binance API and saves them to a PostgreSQL database.
 
 ## Installation 🛠️

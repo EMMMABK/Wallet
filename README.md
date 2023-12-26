@@ -1,6 +1,10 @@
-# Crypto Prices Django Project 📈💰
 ![CryptoCurrency](https://i.ibb.co/LkJpSNx/Neon-geometrical-cryptocurrency-Instagram-Post.png)
+
+
+# Crypto Prices Django Project 📈💰
+
 This is a Django project that fetches cryptocurrency prices from the Binance API and saves them to a PostgreSQL database.
+
 
 ## Installation 🛠️
 
